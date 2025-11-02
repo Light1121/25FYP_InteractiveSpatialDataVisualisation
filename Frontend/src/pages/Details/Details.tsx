@@ -78,14 +78,31 @@ const Details: FC = () => {
     if (pins.length === 0) return
 
     const fetchWeatherForPin = async (pin: PinData) => {
-      const { getWeatherForLocation } = await import('@/api')
-
-      const { weatherData } = await getWeatherForLocation(
-        pin.position.lat,
-        pin.position.lng,
+      /// Step 1: Get nearest station for this pin
+      const nearestRes = await fetch(
+        `https://weatherjyjam-production.up.railway.app/api/weather/nearest?lat=${pin.position.lat}&lng=${pin.position.lng}`,
       )
+      if (!nearestRes.ok)
+        throw new Error(`Failed to fetch nearest station: ${nearestRes.status}`)
 
-      return weatherData.map((entry: RawWeatherEntry) => ({
+      const nearestJson = await nearestRes.json()
+      if (nearestJson.status !== 'success') throw new Error(nearestJson.message)
+
+      const stationName = nearestJson.data['Station Name']
+
+      // Step 2: Get detailed weather data
+      const stationRes = await fetch(
+        `https://weatherjyjam-production.up.railway.app/api/weather/avg_${encodeURIComponent(stationName)}`,
+      )
+      if (!stationRes.ok)
+        throw new Error(`Failed to fetch weather data: ${stationRes.status}`)
+
+      const stationJson = await stationRes.json()
+      if (stationJson.length === 0)
+        throw new Error('Failed to retrieve weather data')
+
+      // Step 3: Transform and tag data
+      return stationJson.map((entry: RawWeatherEntry) => ({
         date: entry['Date'],
         temperature: Number(entry['Avg_Temperature']),
         humidity: Number(entry['Avg_Relative_Humidity']),

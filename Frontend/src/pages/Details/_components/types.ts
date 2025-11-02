@@ -8,14 +8,6 @@ interface RawWeatherEntry {
   Avg_Wind_Speed: number
 }
 
-interface FormattedWeatherData {
-  date: string
-  temperature: number
-  humidity: number
-  wind_speed: number
-  precipitation: number
-}
-
 interface TimeRangeSliderProps {
   minYear?: number
   maxYear?: number
@@ -24,4 +16,4 @@ interface TimeRangeSliderProps {
   graphIndex?: number
 }
 
-export type { RawWeatherEntry, FormattedWeatherData, TimeRangeSliderProps }
+export type { RawWeatherEntry, TimeRangeSliderProps }

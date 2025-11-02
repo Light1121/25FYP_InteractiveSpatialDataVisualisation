@@ -48,6 +48,7 @@ const colors = ['#007acc', '#e67e22']
 
 const LineChartBox: FC<LineChartBoxProps> = ({ metric, data }) => {
   const [highlighted, setHighlighted] = useState<string | null>(null)
+  const [showExtra, setShowExtra] = useState(false)
 
   // Get unique pin names
   const pins: string[] = Array.from(new Set(data.map((d) => d.locationName)))
@@ -110,6 +111,44 @@ const LineChartBox: FC<LineChartBoxProps> = ({ metric, data }) => {
   const uniqueYears = Array.from(new Set(years))
   const multipleYears = uniqueYears.length > 1
 
+  // Regression function
+  const computeRegression = (data: { date: string; value: number }[]) => {
+    const n = data.length
+    if (n === 0) return []
+
+    const xVals = data.map((_, idx) => idx)
+    const yVals = data.map((d) => d.value)
+    const xMean = xVals.reduce((sum, x) => sum + x, 0) / n
+    const yMean = yVals.reduce((sum, y) => sum + y, 0) / n
+
+    let numerator = 0
+    let denominator = 0
+    for (let i = 0; i < n; i++) {
+      numerator += (xVals[i] - xMean) * (yVals[i] - yMean)
+      denominator += (xVals[i] - xMean) ** 2
+    }
+    const slope = numerator / denominator
+    const intercept = yMean - slope * xMean
+
+    return data.map((d, i) => ({ date: d.date, value: slope * i + intercept }))
+  }
+
+  // // Format for display
+  // const formattedData: FormattedDataRow[] = mergedData.map((row) => {
+  //   const [year, month] = String(row.date).split('-')
+  //   const monthName = new Date(`${year}-${month}-01`).toLocaleString('en-US', {
+  //     month: 'short',
+  //     year: multipleYears ? 'numeric' : undefined,
+  //   })
+
+  //   return {
+  //     ...row,
+  //     // keep full ISO date for sorting and unique key
+  //     fullDate: `${year}-${month}-01`,
+  //     displayDate: monthName,
+  //   }
+  // })
+
   const formattedData: FormattedDataRow[] = mergedData.map((row) => {
     const [year, month] = String(row.date).split('-')
     const monthName = new Date(`${year}-${month}-01`).toLocaleString('en-US', {
@@ -123,21 +162,89 @@ const LineChartBox: FC<LineChartBoxProps> = ({ metric, data }) => {
     }
   })
 
+  /// For each location, compute regression and map date value
+  const regressionByLocation = Object.fromEntries(
+    locations.map((loc) => {
+      const reg = computeRegression(
+        formattedData.map((d) => ({
+          date: d.date, // keep as string, not new Date()
+          value: Number(d[loc]),
+        })),
+      )
+
+      // Convert to lookup by time for merging
+      const lookup = Object.fromEntries(
+        reg.map((r) => [new Date(r.date).getTime(), r.value]),
+      )
+
+      return [loc, lookup]
+    }),
+  )
+
+  // Merge regression data back into formattedData
+  const combinedData = formattedData.map((d) => {
+    const time = new Date(d.date).getTime()
+    const regressionValues = Object.fromEntries(
+      locations.map((loc) => [
+        `${loc}_reg`,
+        regressionByLocation[loc]?.[time] ?? null,
+      ]),
+    )
+    return { ...d, ...regressionValues }
+  })
+
+  console.log(combinedData)
+
+  // const statsData: StatsDataRow[] = formattedData.map(d => {
+  //   const values = locations.map(loc => Number(d[loc])).filter(v => !isNaN(v))
+  //   const mean = values.reduce((sum, v) => sum + v, 0) / values.length
+  //   const std =
+  //     Math.sqrt(
+  //       values.reduce((sum, v) => sum + (v - mean) ** 2, 0) / values.length
+  //     ) || 0
+  //   return {
+  //     date: d.date,
+  //     mean,
+  //     std
+  //   }
+  // })
+
   // If two locations exist, compute difference (A - B)
   if (locations.length === 2) {
     const [locA, locB] = locations
-    formattedData.forEach((d) => {
+    combinedData.forEach((d) => {
       const a = Number(d[locA]) || Number(d[locB]) || 0
       const b = Number(d[locB]) || Number(d[locA]) || 0
       d.difference = Math.abs(a - b)
     })
   }
 
+  // Compute min/max from main lines only
+  const allValues: number[] = []
+  locations.forEach((loc) => {
+    formattedData.forEach((d) => {
+      const val = Number(d[loc])
+      if (!isNaN(val)) allValues.push(val)
+    })
+  })
+  const yMin = Math.min(...allValues)
+  const yMax = Math.max(...allValues)
+  const paddingFactor = 0.1 // 10%
+  const yMinPadded = yMin - (yMax - yMin) * paddingFactor
+  const yMaxPadded = yMax + (yMax - yMin) * paddingFactor
+
   return (
     <div style={{ width: '100%', height: '300px' }}>
+      <button
+        onClick={() => setShowExtra((prev) => !prev)}
+        style={{ marginBottom: 8 }}
+      >
+        {showExtra ? 'Hide Extra Details' : 'Show Extra Details'}
+      </button>
+
       <ResponsiveContainer width="100%" height="100%">
         <LineChart
-          data={formattedData}
+          data={combinedData}
           margin={{ top: 20, right: 30, left: 0, bottom: 20 }}
         >
           {/* Grid */}
@@ -158,7 +265,11 @@ const LineChartBox: FC<LineChartBoxProps> = ({ metric, data }) => {
           </XAxis>
 
           {/* Y Axis */}
-          <YAxis tick={{ fontSize: 12, fill: '#555' }}>
+          <YAxis
+            tick={{ fontSize: 12, fill: '#555' }}
+            domain={[Math.round(yMinPadded), Math.round(yMaxPadded)]}
+            tickFormatter={(value: number) => value.toFixed(1)}
+          >
             <Label
               angle={-90}
               position="insideLeft"
@@ -217,6 +328,45 @@ const LineChartBox: FC<LineChartBoxProps> = ({ metric, data }) => {
               style={{ cursor: 'pointer' }}
             />
           )}
+
+          {/* Regression line */}
+          {showExtra &&
+            locations.map((loc, idx) => (
+              <Line
+                key={`regression-${loc}`}
+                type="linear"
+                dataKey={`${loc}_reg`} //  use merged field name
+                name={`${loc} Trend`}
+                stroke={colors[idx]}
+                strokeDasharray="5 5"
+                strokeWidth={2}
+                dot={false}
+                opacity={0.6}
+              />
+            ))}
+
+          {/* std band */}
+          {/* {showExtra && (
+            <div>
+              <Area
+              type="monotone"
+              dataKey={(row) => row.mean + row.std}
+              data={statsData}
+              stroke="none"
+              fill="#8884d8"
+              fillOpacity={0.2}
+              />
+              <Area
+                type="monotone"
+                dataKey={(row) => row.mean - row.std}
+                data={statsData}
+                stroke="none"
+                fill="#fff"
+                fillOpacity={1}
+              />
+            </div>
+            
+          )} */}
         </LineChart>
       </ResponsiveContainer>
     </div>
